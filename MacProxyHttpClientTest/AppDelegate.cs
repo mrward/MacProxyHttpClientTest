@@ -23,13 +23,15 @@
 // LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 // THE SOFTWARE.
-using AppKit;
-using Foundation;
+
 using System;
-using System.Net.Http;
-using System.Threading.Tasks;
 using System.Net;
-using ObjCRuntime;
+using System.Net.Http;
+using System.Net.Http.Headers;
+using System.Threading.Tasks;
+using AppKit;
+using CoreFoundation;
+using Foundation;
 
 namespace MacProxyHttpClientTest1234
 {
@@ -92,12 +94,98 @@ namespace MacProxyHttpClientTest1234
 			//string url = "https://www.google.co.uk";
 			string url = "https://api.nuget.org/v3/index.json";
 			//string url = "http://cambridge.org";
-			var response = await client.GetAsync (url);
+			var request = new HttpRequestMessage (HttpMethod.Get, url);
+			AddHeaders (request);
+			var response = await client.SendAsync (request);
 			if (response.StatusCode == System.Net.HttpStatusCode.OK) {
 				Console.WriteLine ("OK");
 			} else {
 				Console.Write (response.StatusCode);
 			}
+		}
+
+		void AddHeaders (HttpRequestMessage request)
+		{
+			CFProxy proxy = GetProxy (request);
+			if (proxy == null || proxy.ProxyType != CFProxyType.HTTPS)
+				return;
+
+			NSUrlCredential credential = GetProxyCredential (proxy);
+			if (credential == null)
+				return;
+
+			string auth = GetBasicAuthHeaderValue (credential);
+			if (string.IsNullOrEmpty (auth))
+				return;
+
+			request.Headers.ProxyAuthorization = new AuthenticationHeaderValue ("Basic", auth);
+		}
+
+		static NSUrlCredential GetProxyCredential (CFProxy proxy)
+		{
+			foreach (NSObject key in NSUrlCredentialStorage.SharedCredentialStorage.AllCredentials.Keys) {
+				var protectionSpace = key as NSUrlProtectionSpace;
+				if (!IsProtectionSpaceForProject (protectionSpace, proxy))
+					continue;
+
+				// Only basic auth and HTTPS is supported.
+				if (proxy.ProxyType != CFProxyType.HTTPS || protectionSpace.AuthenticationMethod != NSUrlProtectionSpace.AuthenticationMethodHTTPBasic)
+					continue;
+
+				var dictionary = NSUrlCredentialStorage.SharedCredentialStorage.AllCredentials [key] as NSDictionary;
+				if (dictionary == null)
+					continue;
+
+				foreach (var value in dictionary) {
+					var credential = value.Value as NSUrlCredential;
+					if (credential != null)
+						return credential;
+				}
+			}
+			return null;
+		}
+
+		static bool IsProtectionSpaceForProject (NSUrlProtectionSpace protectionSpace, CFProxy proxy)
+		{
+			return protectionSpace != null &&
+				protectionSpace.IsProxy &&
+				protectionSpace.Port == proxy.Port &&
+				StringComparer.OrdinalIgnoreCase.Equals (protectionSpace.ProxyType, proxy.ProxyType.ToString ()) &&
+				StringComparer.OrdinalIgnoreCase.Equals (protectionSpace.Host, proxy.HostName);
+		}
+
+		static CFProxy GetProxy (HttpRequestMessage request)
+		{
+			var settings = CoreFoundation.CFNetwork.GetSystemProxySettings ();
+			var proxies = CoreFoundation.CFNetwork.GetProxiesForUri (request.RequestUri, null);
+			if (proxies.Length == 1) {
+				return proxies [0];
+			}
+			return null;
+		}
+
+		string GetBasicAuthHeaderValue (NSUrlCredential credential)
+		{
+			if (string.IsNullOrEmpty (credential.User))
+				return null;
+
+			string password = credential.Password ?? string.Empty;
+			byte[] bytes = GetBytes (credential.User + ":" + password);
+
+			return Convert.ToBase64String (bytes);
+		}
+
+		/// <summary>
+		/// From Mono's BasicClient
+		/// </summary>
+		static byte[] GetBytes (string str)
+		{
+			int i = str.Length;
+			byte[] result = new byte[i];
+			for (--i; i >= 0; i--)
+				result[i] = (byte)str[i];
+
+			return result;
 		}
 	}
 
