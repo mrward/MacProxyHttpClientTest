@@ -107,7 +107,7 @@ namespace MacProxyHttpClientTest1234
 
 		void AddHeaders (HttpRequestMessage request)
 		{
-			ProxyInfo proxy = GetProxy (request);
+			ProxyInfo proxy = GetProxy (request.RequestUri);
 			if (proxy == null || proxy.ProxyType != CFProxyType.HTTPS)
 				return;
 
@@ -155,24 +155,8 @@ namespace MacProxyHttpClientTest1234
 				StringComparer.OrdinalIgnoreCase.Equals (protectionSpace.Host, proxy.HostName);
 		}
 
-		static ProxyInfo GetProxy (HttpRequestMessage request)
+		static ProxyInfo GetProxy (Uri requestUri)
 		{
-			var settings = CoreFoundation.CFNetwork.GetSystemProxySettings ();
-			var proxies = CoreFoundation.CFNetwork.GetProxiesForUri (request.RequestUri, null);
-			var proxy = proxies.FirstOrDefault ();
-			if (proxy != null) {
-				if (proxy.ProxyType == CFProxyType.AutoConfigurationUrl) {
-					return GetProxyForAutoConfigurationUrl (request.RequestUri);
-				}
-				return new ProxyInfo (proxy);
-			}
-			return null;
-		}
-
-		static ProxyInfo GetProxyForAutoConfigurationUrl (Uri requestUri)
-		{
-			//IWebProxy defaultWebProxy = CoreFoundation.CFNetwork.GetDefaultProxy (); // Does not work - cannot get proxy uri from this.
-
 			IWebProxy systemProxy = WebRequest.GetSystemWebProxy ();
 			Uri proxyUri = systemProxy.GetProxy (requestUri);
 			var proxyAddress = new Uri (proxyUri.AbsoluteUri);
