@@ -25,6 +25,7 @@
 // THE SOFTWARE.
 
 using System;
+using System.Linq;
 using System.Net;
 using System.Net.Http;
 using System.Net.Http.Headers;
@@ -106,7 +107,7 @@ namespace MacProxyHttpClientTest1234
 
 		void AddHeaders (HttpRequestMessage request)
 		{
-			CFProxy proxy = GetProxy (request);
+			ProxyInfo proxy = GetProxy (request);
 			if (proxy == null || proxy.ProxyType != CFProxyType.HTTPS)
 				return;
 
@@ -121,7 +122,7 @@ namespace MacProxyHttpClientTest1234
 			request.Headers.ProxyAuthorization = new AuthenticationHeaderValue ("Basic", auth);
 		}
 
-		static NSUrlCredential GetProxyCredential (CFProxy proxy)
+		static NSUrlCredential GetProxyCredential (ProxyInfo proxy)
 		{
 			foreach (NSObject key in NSUrlCredentialStorage.SharedCredentialStorage.AllCredentials.Keys) {
 				var protectionSpace = key as NSUrlProtectionSpace;
@@ -145,7 +146,7 @@ namespace MacProxyHttpClientTest1234
 			return null;
 		}
 
-		static bool IsProtectionSpaceForProject (NSUrlProtectionSpace protectionSpace, CFProxy proxy)
+		static bool IsProtectionSpaceForProject (NSUrlProtectionSpace protectionSpace, ProxyInfo proxy)
 		{
 			return protectionSpace != null &&
 				protectionSpace.IsProxy &&
@@ -154,14 +155,53 @@ namespace MacProxyHttpClientTest1234
 				StringComparer.OrdinalIgnoreCase.Equals (protectionSpace.Host, proxy.HostName);
 		}
 
-		static CFProxy GetProxy (HttpRequestMessage request)
+		static ProxyInfo GetProxy (HttpRequestMessage request)
 		{
 			var settings = CoreFoundation.CFNetwork.GetSystemProxySettings ();
 			var proxies = CoreFoundation.CFNetwork.GetProxiesForUri (request.RequestUri, null);
-			if (proxies.Length == 1) {
-				return proxies [0];
+			var proxy = proxies.FirstOrDefault ();
+			if (proxy != null) {
+				if (proxy.ProxyType == CFProxyType.AutoConfigurationUrl) {
+					return GetProxyForAutoConfigurationUrl (request.RequestUri);
+				}
+				return new ProxyInfo (proxy);
 			}
 			return null;
+		}
+
+		static ProxyInfo GetProxyForAutoConfigurationUrl (Uri requestUri)
+		{
+			//IWebProxy defaultWebProxy = CoreFoundation.CFNetwork.GetDefaultProxy (); // Does not work - cannot get proxy uri from this.
+
+			IWebProxy systemProxy = WebRequest.GetSystemWebProxy ();
+			Uri proxyUri = systemProxy.GetProxy (requestUri);
+			var proxyAddress = new Uri (proxyUri.AbsoluteUri);
+
+			if (string.Equals (proxyAddress.AbsoluteUri, requestUri.AbsoluteUri))
+				return null;
+			if (systemProxy.IsBypassed (requestUri))
+				return null;
+
+			var proxyType = GetProxyType (requestUri);
+			return new ProxyInfo {
+				Port = proxyAddress.Port,
+				ProxyType = GetProxyType (requestUri),
+				HostName = proxyAddress.Host
+			};
+		}
+
+		static CFProxyType GetProxyType (Uri requestUri)
+		{
+			switch (requestUri.Scheme.ToLower ()) {
+				case "https":
+				return CFProxyType.HTTPS;
+
+				case "http":
+				return CFProxyType.HTTP;
+
+				default:
+				return CFProxyType.None;
+			}
 		}
 
 		string GetBasicAuthHeaderValue (NSUrlCredential credential)
